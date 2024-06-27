@@ -70,40 +70,71 @@ class Segmenter():
         while True:
             logging.info("Waiting for connection...")
             conn, addr = self.socket.accept()
-            logging.info("connected with ", addr)
+            logging.info(f"connected with {addr}")
             self.is_first_mask_set = False
             self.img_count = 0
-            with conn, conn.makefile('rb') as rfile:
-                    while True:
-                        try:
-                            logging.info("waiting for packet...")
-                            input_data = pickle.load(rfile)        
-                        except EOFError: # when socket closes
-                            break
-                        ret_data = dict()
-                        
-                        if("mask" in input_data) and ( not self.is_first_mask_set):
-                            mask_img = input_data["mask"]
-                            color_img = input_data["rgb"]
-                            self.setFirstMask(mask_img, color_img)
-                            ret_data["mask"] = None
-                            ret_data["success"] = True
-                            self.is_first_mask_set = True
-                        elif("rgb" in input_data):
-                            color_img = input_data["rgb"]
-                            mask_img = self.runFrame(color_img= color_img)
-                            ret_data["mask"] = mask_img
-                            ret_data["success"] = True
-                        else:
-                            ret_data["mask"] = None
-                            ret_data["success"] = False
-                        
-                        logging.info(f"returning package with {ret_data['success']}")
-                                                    
-                        data = pickle.dumps(ret_data)
-                        conn.send(data)
+            while True:
+                logging.info("waiting for packet...")
+                data_len = int.from_bytes(conn.recv(4), byteorder='big')
+                logging.info(f"receiving packet with length {data_len}")
+                data = b''
+                #receive data
+                while len(data) < data_len:
+                    part = conn.recv(data_len - len(data))
+                    data += part
+                try:
+                    input_data = pickle.loads(data)
+                except EOFError:
+                    break
+
+                ret_data = dict()
+                
+                if("mask" in input_data) and ( not self.is_first_mask_set):
+                    mask_img = input_data["mask"]
+                    color_img = input_data["rgb"]
+                    self.setFirstMask(mask_img, color_img)
+                    ret_data["mask"] = None
+                    ret_data["success"] = True
+                    self.is_first_mask_set = True
+                elif("rgb" in input_data):
+                    color_img = input_data["rgb"]
+                    mask_img = self.runFrame(color_img= color_img)
+                    ret_data["mask"] = mask_img
+                    ret_data["success"] = True
+                else:
+                    ret_data["mask"] = None
+                    ret_data["success"] = False
+                
+                data = pickle.dumps(ret_data)
+                logging.info(f"returning package with status: {ret_data['success']} len: {len(data)}")
+                #sending length first
+                conn.sendall(len(data).to_bytes(4, byteorder='big'))
+                conn.sendall(data)
+            self.clear_detector()      
 
 
+    def clear_detector(self):
+        logging.info("Reseting ...")
+        torch.cuda.empty_cache()
+        hydra.core.global_hydra.GlobalHydra.instance().clear()
+        with torch.inference_mode():
+            initialize(version_base='1.3.2', config_path="cutie/config", job_name="eval_config")
+            self.cfg = compose(config_name="eval_config")
+
+            with open_dict(self.cfg):
+                self.cfg['weights'] = './weights/cutie-base-mega.pth'
+
+            data_cfg = get_dataset_cfg(self.cfg)
+
+            # Load the network weights
+            self.cutie = CUTIE(self.cfg).cuda().eval()
+            self.model_weights = torch.load(self.cfg.weights)
+            self.cutie.load_weights(self.model_weights)
+            self.processor = InferenceCore(self.cutie, cfg=self.cfg)
+        torch.cuda.empty_cache()
+        logging.info("Reseting complete")
+
+        
 
 
     def setFirstMask(self, first_mask, first_color_img):
@@ -140,11 +171,11 @@ if __name__ == "__main__":
     segmenter.run_server()
 
     #manual inference
-    first_mask_path = "/home/thws_robotik/Documents/Leyh/6dpose/datasets/BuchVideo/first_mask.png"
-    first_color_path = "/home/thws_robotik/Documents/Leyh/6dpose/datasets/BuchVideo/rgb/00000.png"
-    first_mask = cv2.imread(first_mask_path, cv2.IMREAD_GRAYSCALE)
-    first_color = cv2.imread(first_color_path)
-    segmenter.setFirstMask(first_mask, first_color)
-    color_inf_img = cv2.imread("/home/thws_robotik/Documents/Leyh/6dpose/datasets/BuchVideo/rgb/00001.png")
-    mask = segmenter.runFrame(color_inf_img)
-    cv2.imwrite("out/mask_pred.jpg", mask * 255)
+    # first_mask_path = "/home/thws_robotik/Documents/Leyh/6dpose/datasets/BuchVideo/first_mask.png"
+    # first_color_path = "/home/thws_robotik/Documents/Leyh/6dpose/datasets/BuchVideo/rgb/00000.png"
+    # first_mask = cv2.imread(first_mask_path, cv2.IMREAD_GRAYSCALE)
+    # first_color = cv2.imread(first_color_path)
+    # segmenter.setFirstMask(first_mask, first_color)
+    # color_inf_img = cv2.imread("/home/thws_robotik/Documents/Leyh/6dpose/datasets/BuchVideo/rgb/00001.png")
+    # mask = segmenter.runFrame(color_inf_img)
+    # cv2.imwrite("out/mask_pred.jpg", mask * 255)
