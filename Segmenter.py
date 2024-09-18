@@ -57,6 +57,7 @@ class Segmenter():
         
         self.host= "192.168.99.91"#'localhost'
         self.port= 15323
+        logging.info(f"Waiting for connection at {(self.host, self.port)}")
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.socket.bind((self.host, self.port))
         self.socket.listen()
@@ -134,7 +135,35 @@ class Segmenter():
         torch.cuda.empty_cache()
         logging.info("Reseting complete")
 
+    def run_folder(self, rgb_dir, first_mask_path, mask_out_dir):
+        mask_out_viz_path = mask_out_dir + "_viz"
+
+        os.makedirs(mask_out_dir, exist_ok= True)
+        os.makedirs(mask_out_viz_path, exist_ok= True)
+
+        rgb_paths = os.listdir(rgb_dir)
+        rgb_paths.sort()
+
+        first_mask = cv2.imread(first_mask_path, cv2.IMREAD_GRAYSCALE)
+        first_rgb = cv2.imread(os.path.join(rgb_dir,rgb_paths[0]))
+        self.setFirstMask(first_mask, first_rgb)
+
+        for rgb_path in rgb_paths:
+            logging.info(f"running {rgb_path}")
+
+            rgb = cv2.imread(os.path.join(rgb_dir, rgb_path))
+
+            mask = self.runFrame(rgb)
+            mask = np.where(mask > 0, 255, 0)
+            mask_path = rgb_path.replace("jpg","png")
+            mask_viz = overlay_davis(rgb, mask)
+
+            cv2.imwrite(os.path.join(mask_out_dir, mask_path), mask)
+            cv2.imwrite(os.path.join(mask_out_viz_path, mask_path), mask_viz)
+
+
         
+
 
 
     def setFirstMask(self, first_mask, first_color_img):
@@ -153,7 +182,7 @@ class Segmenter():
     def runFrame(self, color_img):
         
         device = 'cuda'
-        torch.cuda.empty_cache()
+        #torch.cuda.empty_cache()
         mask_img = None
         with torch.inference_mode():
 
@@ -168,7 +197,10 @@ class Segmenter():
 
 if __name__ == "__main__":
     segmenter = Segmenter()
-    segmenter.run_server()
+    #segmenter.run_server()
+    segmenter.run_folder(rgb_dir="/home/thws_robotik/Documents/Leyh/6dpose/datasets/HO3D_v3/evaluation/SM1/rgb",
+        first_mask_path= "/home/thws_robotik/Documents/Leyh/6dpose/datasets/HO3D_v3/evaluation/SM1/0000.png",
+        mask_out_dir= "/home/thws_robotik/Documents/Leyh/6dpose/datasets/HO3D_v3/evaluation/SM1/masks_Cutie")
 
     #manual inference
     # first_mask_path = "/home/thws_robotik/Documents/Leyh/6dpose/datasets/BuchVideo/first_mask.png"
